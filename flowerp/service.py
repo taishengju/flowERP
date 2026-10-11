@@ -103,13 +103,11 @@ class ERPService:
         )
 
     def export_inventory(self) -> str:
-        rows = self.inventory()
-        lines = ["sku,name,site,location,lot_id,on_hand,reserved,available"]
-        for row in rows:
-            lines.append(
-                f"{row['sku']},{row['name']},MAIN,STOCK,,{row['on_hand']},{row['reserved']},{row['available']}"
-            )
-        return "\n".join(lines)
+        """按 商品×仓库×仓位×批次 导出库存；复用既有导出事实源，不新增库存口径。"""
+        from .identity import SYSTEM_PRINCIPAL
+        from .import_export import ImportExportService
+
+        return ImportExportService(self.store).export_csv(SYSTEM_PRINCIPAL, "inventory")
 
     def _publish_authority(self, sku: str) -> None:
         """Keep the v2 ledger aligned with the course-facing available quantity."""
