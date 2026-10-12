@@ -1,0 +1,69 @@
+# L08 单仓候选工作流（A 阶段：演示用「吞掉失败」的外层）。
+# 与 eval.yml 的唯一差别：三条门禁步骤 continue-on-error，Job 以成功收尾。
+# 所以业务失败时 Job 仍显示绿色 —— 这就是本讲要消除的假绿。
+# A→B 的受控变量只有这几处；业务与检查都不许动。
+name: L08 Candidate Eval
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  blocking-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI_REPORT_DIR: _ci_reports/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare environment
+        id: environment
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
+      - name: Record source versions and loaded checks
+        id: sources
+        shell: bash
+        run: |
+          mkdir -p "$CI_REPORT_DIR"
+          {
+            printf "checkout_sha="; git rev-parse HEAD
+            printf "event=%s\\n" "${{ github.event_name }}"
+            printf "pr_head=%s\\n" "${{ github.event.pull_request.head.sha }}"
+            sha256sum eval/harness.py eval/cases.py tools/ci_evidence.py
+          } > "$CI_REPORT_DIR/source-versions.txt"
+          cat "$CI_REPORT_DIR/source-versions.txt"
+      - name: Unit tests (A 阶段：吞掉失败)
+        continue-on-error: true
+        run: .venv/bin/python -X utf8 -m unittest discover -s tests -v
+      - name: Blocking gate (A 阶段：吞掉失败)
+        continue-on-error: true
+        run: .venv/bin/python -X utf8 -m eval.harness --suite blocking --no-report
+      - name: Explicit frozen business gate (A 阶段：吞掉失败，仍出报告)
+        continue-on-error: true
+        run: |
+          .venv/bin/python -X utf8 -m eval.harness --suite blocking \
+            --case sales_credit_and_atomic_reservation \
+            --case l08_multi_line_reservation_succeeds \
+            --case l08_second_line_shortage_rolls_back \
+            --case l08_midwrite_failure_rolls_back \
+            --report-path "$CI_REPORT_DIR/harness-blocking.json"
+      - name: Bind report identity (envelope)
+        if: always()
+        run: .venv/bin/python -X utf8 tools/ci_evidence.py --report "$CI_REPORT_DIR/harness-blocking.json" --output "$CI_REPORT_DIR/ci-evidence.json"
+      - name: Upload this attempt's evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l08-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CI_REPORT_DIR }}/harness-blocking.json
+            ${{ env.CI_REPORT_DIR }}/ci-evidence.json
+            ${{ env.CI_REPORT_DIR }}/source-versions.txt
+          if-no-files-found: warn

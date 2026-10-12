@@ -277,17 +277,17 @@ class SalesService:
         return self.order(principal, document_id)
 
     def reserve(self, principal: Principal, document_id: str, allocations: dict[str, list[dict]] | None = None) -> dict:
-        """Reserve every remaining line in one transaction; any shortage rolls all back."""
+        """L08 起点实现：本讲增量已被课程侧工具剥离，逐行预占、每行单独提交。"""
         principal.require("sales.confirm")
         with self.store.connect() as conn:
             header = conn.execute("SELECT * FROM sales_documents WHERE id=? AND organization_id=?", (document_id, principal.organization_id)).fetchone()
             if not header: raise NotFound(f"销售单不存在：{document_id}")
             if header["status"] not in {"confirmed", "reserved"}: raise InvalidTransition(f"订单状态不允许预占：{header['status']}")
             lines = conn.execute("SELECT l.*,p.sku FROM sales_document_lines l JOIN product_master p ON p.id=l.product_id WHERE l.document_id=? ORDER BY l.line_number", (document_id,)).fetchall()
-            planned: list[tuple[sqlite3.Row, str, str, int]] = []
-            for line in lines:
-                needed = line["ordered_quantity"] - line["shipped_quantity"] - line["reserved_quantity"]
-                if needed <= 0: continue
+        for line in lines:
+            needed = line["ordered_quantity"] - line["shipped_quantity"] - line["reserved_quantity"]
+            if needed <= 0: continue
+            with self.store.connect() as conn:
                 requested = (allocations or {}).get(line["id"], [])
                 if requested:
                     if sum(int(item["quantity"]) for item in requested) != needed:
@@ -298,29 +298,29 @@ class SalesService:
                 total = sum(item[2] for item in candidates)
                 if total < needed:
                     raise InsufficientStock(line["sku"], needed, total)
-                planned.extend((line, location_id, lot_id, quantity) for location_id, lot_id, quantity in candidates)
-            for line, location_id, lot_id, quantity in planned:
-                balance = conn.execute(
-                    "SELECT on_hand-reserved AS available FROM stock_balance WHERE organization_id=? AND product_id=? AND location_id=? AND lot_id=?",
-                    (principal.organization_id, line["product_id"], location_id, lot_id),
-                ).fetchone()
-                available = balance["available"] if balance else 0
-                cursor = conn.execute(
-                    "UPDATE stock_balance SET reserved=reserved+?,outgoing=outgoing+?,updated_at=CURRENT_TIMESTAMP,version=version+1 "
-                    "WHERE organization_id=? AND product_id=? AND location_id=? AND lot_id=? AND on_hand-reserved>=?",
-                    (quantity, quantity, principal.organization_id, line["product_id"], location_id, lot_id, quantity),
-                )
-                if cursor.rowcount != 1: raise InsufficientStock(line["sku"], quantity, available)
-                conn.execute(
-                    "INSERT INTO stock_reservations(id,organization_id,product_id,location_id,lot_id,reference_type,reference_id,reference_line_id,quantity) VALUES(?,?,?,?,?,'sales_order',?,?,?)",
-                    (self._id("RSV"), principal.organization_id, line["product_id"], location_id, lot_id, document_id, line["id"], quantity),
-                )
-                conn.execute("UPDATE sales_document_lines SET reserved_quantity=reserved_quantity+? WHERE id=?", (quantity, line["id"]))
+                for location_id, lot_id, quantity in candidates:
+                    balance = conn.execute(
+                        "SELECT on_hand-reserved AS available FROM stock_balance WHERE organization_id=? AND product_id=? AND location_id=? AND lot_id=?",
+                        (principal.organization_id, line["product_id"], location_id, lot_id),
+                    ).fetchone()
+                    available = balance["available"] if balance else 0
+                    cursor = conn.execute(
+                        "UPDATE stock_balance SET reserved=reserved+?,outgoing=outgoing+?,updated_at=CURRENT_TIMESTAMP,version=version+1 "
+                        "WHERE organization_id=? AND product_id=? AND location_id=? AND lot_id=? AND on_hand-reserved>=?",
+                        (quantity, quantity, principal.organization_id, line["product_id"], location_id, lot_id, quantity),
+                    )
+                    if cursor.rowcount != 1: raise InsufficientStock(line["sku"], quantity, available)
+                    conn.execute(
+                        "INSERT INTO stock_reservations(id,organization_id,product_id,location_id,lot_id,reference_type,reference_id,reference_line_id,quantity) VALUES(?,?,?,?,?,'sales_order',?,?,?)",
+                        (self._id("RSV"), principal.organization_id, line["product_id"], location_id, lot_id, document_id, line["id"], quantity),
+                    )
+                    conn.execute("UPDATE sales_document_lines SET reserved_quantity=reserved_quantity+? WHERE id=?", (quantity, line["id"]))
+        with self.store.connect() as conn:
             remaining = conn.execute("SELECT COALESCE(SUM(ordered_quantity-shipped_quantity-reserved_quantity),0) FROM sales_document_lines WHERE document_id=?", (document_id,)).fetchone()[0]
             status = "reserved" if remaining == 0 else "confirmed"
             conn.execute("UPDATE sales_documents SET status=?,updated_at=CURRENT_TIMESTAMP,version=version+1 WHERE id=?", (status, document_id))
             self.audit.record(conn, AuditContext(principal), "sales.reserve", "sales_document", document_id,
-                              after={"status": status, "allocations": len(planned)})
+                              after={"status": status, "allocations": len(lines)})
         return self.order(principal, document_id)
 
     @staticmethod
