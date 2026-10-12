@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import cases
+from . import l08_cases
 
 
 @dataclass
@@ -36,6 +37,9 @@ EVALS = [
     ("multi_location_transfer_conserves_stock", "blocking", cases.multi_location_transfer_conserves_stock),
     ("stale_stock_count_is_blocked", "blocking", cases.stale_stock_count_is_blocked),
     ("sales_credit_and_atomic_reservation", "blocking", cases.sales_credit_and_atomic_reservation),
+    ("l08_multi_line_reservation_succeeds", "blocking", l08_cases.l08_multi_line_reservation_succeeds),
+    ("l08_second_line_shortage_rolls_back", "blocking", l08_cases.l08_second_line_shortage_rolls_back),
+    ("l08_midwrite_failure_rolls_back", "blocking", l08_cases.l08_midwrite_failure_rolls_back),
     ("backup_is_restorable", "blocking", cases.backup_is_restorable),
     ("purchase_invoice_three_way_match", "blocking", cases.purchase_invoice_three_way_match),
     ("payable_aging_tracks_open_supplier_exposure", "blocking", cases.payable_aging_tracks_open_supplier_exposure),
