@@ -4,6 +4,7 @@
 # A→B 的受控变量只有这几处；业务与检查都不许动。
 name: L08 Candidate Eval
 on:
+  push:
   pull_request:
   workflow_dispatch:
 permissions:
