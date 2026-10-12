@@ -1,7 +1,7 @@
-# L08 单仓候选工作流（A 阶段：演示用「吞掉失败」的外层）。
-# 与 eval.yml 的唯一差别：三条门禁步骤 continue-on-error，Job 以成功收尾。
-# 所以业务失败时 Job 仍显示绿色 —— 这就是本讲要消除的假绿。
-# A→B 的受控变量只有这几处；业务与检查都不许动。
+# L08 单仓候选工作流（B／C 阶段：如实传播失败）。
+# 毛五选 A：远程只接产品仓 flowERP，本文件放 flowERP 的 .github/workflows/eval.yml。
+# 与课程 examples/eval-workflow.yml.txt 的差异：示例在课程仓运行并 checkout 固定产品提交；
+# 单仓版没有第二个 checkout、没有 FLOWERP_PROJECT_ROOT；信封改用随候选一起发布的 tools/ci_evidence.py。
 name: L08 Candidate Eval
 on:
   push:
@@ -38,16 +38,16 @@ jobs:
             printf "event=%s\\n" "${{ github.event_name }}"
             printf "pr_head=%s\\n" "${{ github.event.pull_request.head.sha }}"
             sha256sum eval/harness.py eval/cases.py tools/ci_evidence.py
+            .venv/bin/python -c 'import flowerp.service, eval.harness; print("product_service=" + flowerp.service.__file__); print("product_harness=" + eval.harness.__file__)'
           } > "$CI_REPORT_DIR/source-versions.txt"
           cat "$CI_REPORT_DIR/source-versions.txt"
-      - name: Unit tests (A 阶段：吞掉失败)
-        continue-on-error: true
+      - name: Unit tests
         run: .venv/bin/python -X utf8 -m unittest discover -s tests -v
-      - name: Blocking gate (A 阶段：吞掉失败)
-        continue-on-error: true
+      - name: Blocking gate
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}
         run: .venv/bin/python -X utf8 -m eval.harness --suite blocking --no-report
-      - name: Explicit frozen business gate (A 阶段：吞掉失败，仍出报告)
-        continue-on-error: true
+      - name: Explicit frozen business gate
+        if: ${{ !cancelled() && steps.environment.outcome == 'success' && steps.sources.outcome == 'success' }}
         run: |
           .venv/bin/python -X utf8 -m eval.harness --suite blocking \
             --case sales_credit_and_atomic_reservation \
@@ -67,4 +67,4 @@ jobs:
             ${{ env.CI_REPORT_DIR }}/harness-blocking.json
             ${{ env.CI_REPORT_DIR }}/ci-evidence.json
             ${{ env.CI_REPORT_DIR }}/source-versions.txt
-          if-no-files-found: warn
+          if-no-files-found: error
